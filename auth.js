@@ -102,6 +102,13 @@ class Auth {
       return res.status(401).json({ error: 'No authentication token provided' });
     }
 
+    // Check if it's the raw API secret (for dashboard compatibility)
+    if (token === this.secretKey) {
+      req.auth = { type: 'api_secret', role: 'admin' };
+      return next();
+    }
+
+    // Try to verify as JWT token
     const payload = this.verifyToken(token);
     if (!payload) {
       return res.status(401).json({ error: 'Invalid or expired token' });
