@@ -207,6 +207,42 @@ app.post('/api/send-trade', async (req, res) => {
   }
 });
 
+// Register master bot
+app.post('/api/register-master', async (req, res) => {
+  try {
+    const { accountName, accountNumber, accountBalance, accountCurrency, broker } = req.body;
+    
+    if (!accountNumber) {
+      return res.status(400).json({ success: false, message: 'Account number required' });
+    }
+    
+    // Create unique connection ID for master
+    const connectionId = `master_${accountNumber}_${Date.now()}`;
+    
+    // Add master connection to database with account info
+    await db.addConnection(connectionId, 'master', null, req.ip, {
+      accountName,
+      accountNumber,
+      accountBalance,
+      accountCurrency,
+      broker
+    });
+    
+    console.log(`✅ Master registered: ${accountName} (${accountNumber}) - ${accountCurrency} ${accountBalance}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Master registered successfully',
+      connectionId,
+      accountName,
+      accountNumber
+    });
+  } catch (err) {
+    console.error('Register master error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // Register receiver via HTTP (for MQL5 bots that can't use WebSocket)
 app.post('/api/register-receiver', async (req, res) => {
   try {
@@ -223,10 +259,23 @@ app.post('/api/register-receiver', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid or expired license' });
     }
     
+    // Get active master info
+    const masters = await db.getConnectionsByType('master');
+    let masterName = "Unknown";
+    let masterBroker = "";
+    
+    if (masters && masters.length > 0) {
+      const master = masters[0]; // Get first active master
+      masterName = master.account_name || "Unknown";
+      masterBroker = master.broker || "";
+    }
+    
     res.json({ 
       success: true, 
       message: 'Receiver registered',
-      expiry: license.expiry_date * 1000
+      expiry: license.expiry_date * 1000,
+      masterName: masterName,
+      masterBroker: masterBroker
     });
   } catch (err) {
     console.error('Register receiver error:', err);
