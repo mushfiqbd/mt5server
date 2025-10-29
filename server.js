@@ -80,7 +80,7 @@ app.post('/api/verify-license', async (req, res) => {
       return res.json({ success: false, message: 'License expired' });
     }
     
-    // Update last verified
+    // Update last verified (only increments activation_count on first verify)
     await db.updateLicenseVerified(licenseKey);
     await db.log('info', 'License verified', { licenseKey, user: license.user_email });
     
@@ -143,6 +143,22 @@ app.post('/api/deactivate-license', auth.authenticate.bind(auth), async (req, re
     res.json({ success: true });
   } catch (err) {
     console.error('License deactivation error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Activate license (admin)
+app.post('/api/activate-license', auth.authenticate.bind(auth), async (req, res) => {
+  try {
+    const { licenseKey } = req.body;
+    if (!licenseKey) {
+      return res.status(400).json({ success: false, message: 'License key required' });
+    }
+    await db.run('UPDATE licenses SET status = ? WHERE license_key = ?', ['active', licenseKey]);
+    await db.log('info', 'License activated', { licenseKey });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('License activation error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
@@ -322,6 +338,17 @@ app.post('/api/register-receiver', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid or expired license' });
     }
     
+    // Enforce one active receiver per license
+    const activeReceivers = await db.getConnectionsByType('receiver');
+    const alreadyActive = (activeReceivers || []).some(r => r.license_key === licenseKey && r.status === 'active');
+    if (alreadyActive) {
+      return res.status(409).json({ success: false, message: 'License already in use on another device' });
+    }
+
+    // Create and store receiver connection so dashboards can count it
+    const connectionId = `receiver_${licenseKey}_${Date.now()}`;
+    await db.addConnection(connectionId, 'receiver', licenseKey, req.ip);
+
     // Get active master info
     const masters = await db.getConnectionsByType('master');
     let masterName = "Unknown";
@@ -338,7 +365,8 @@ app.post('/api/register-receiver', async (req, res) => {
       message: 'Receiver registered',
       expiry: license.expiry_date * 1000,
       masterName: masterName,
-      masterBroker: masterBroker
+      masterBroker: masterBroker,
+      connectionId
     });
   } catch (err) {
     console.error('Register receiver error:', err);
