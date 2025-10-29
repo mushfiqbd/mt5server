@@ -202,7 +202,12 @@ app.post('/api/send-trade', async (req, res) => {
     };
     
     // Store signal in memory for HTTP polling (keep for 60 seconds)
+    // Add unique ID to each signal for tracking
+    if (!tradeSignal.id) tradeSignal.id = `sig_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
     if (!global.pendingSignals) global.pendingSignals = [];
+    // Track which receivers have processed this signal
+    tradeSignal.processedBy = [];
     global.pendingSignals.push(tradeSignal);
     
     // Clean old signals (older than 60 seconds)
@@ -238,13 +243,25 @@ app.post('/api/get-signals', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid or expired license' });
     }
     
-    // Get pending signals
-    const signals = global.pendingSignals || [];
+    // Get pending signals that haven't been processed by this receiver yet
+    const allSignals = global.pendingSignals || [];
+    const unprocessedSignals = allSignals.filter(signal => {
+      // Return signals that haven't been processed by this licenseKey
+      return !signal.processedBy || !signal.processedBy.includes(licenseKey);
+    });
+    
+    // Mark signals as processed by this receiver
+    unprocessedSignals.forEach(signal => {
+      if (!signal.processedBy) signal.processedBy = [];
+      if (!signal.processedBy.includes(licenseKey)) {
+        signal.processedBy.push(licenseKey);
+      }
+    });
     
     res.json({ 
       success: true, 
-      signals: signals,
-      count: signals.length,
+      signals: unprocessedSignals,
+      count: unprocessedSignals.length,
       timestamp: Date.now()
     });
   } catch (err) {
