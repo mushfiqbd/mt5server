@@ -191,7 +191,23 @@ app.post('/api/send-trade', async (req, res) => {
     await db.logTrade(licenseKey || 'http-client', symbol, action, volume, sl, tp);
     
     // Build trade signal
-    const tradeSignal = { symbol, action, volume, sl, tp, licenseKey };
+    const tradeSignal = { 
+      symbol, 
+      action, 
+      volume, 
+      sl: sl || 0, 
+      tp: tp || 0, 
+      licenseKey,
+      timestamp: Date.now()
+    };
+    
+    // Store signal in memory for HTTP polling (keep for 60 seconds)
+    if (!global.pendingSignals) global.pendingSignals = [];
+    global.pendingSignals.push(tradeSignal);
+    
+    // Clean old signals (older than 60 seconds)
+    const now = Date.now();
+    global.pendingSignals = global.pendingSignals.filter(s => now - s.timestamp < 60000);
     
     // Broadcast to all receivers via WebSocket
     await broadcastTradeSignal(tradeSignal);
@@ -203,6 +219,36 @@ app.post('/api/send-trade', async (req, res) => {
     });
   } catch (err) {
     console.error('Send trade error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get pending signals (HTTP polling for MQL5 receivers)
+app.post('/api/get-signals', async (req, res) => {
+  try {
+    const { licenseKey } = req.body;
+    
+    // Verify license
+    if (!licenseKey) {
+      return res.status(400).json({ success: false, message: 'License key required' });
+    }
+    
+    const license = await db.getLicense(licenseKey);
+    if (!license || license.status !== 'active' || Math.floor(Date.now() / 1000) > license.expiry_date) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired license' });
+    }
+    
+    // Get pending signals
+    const signals = global.pendingSignals || [];
+    
+    res.json({ 
+      success: true, 
+      signals: signals,
+      count: signals.length,
+      timestamp: Date.now()
+    });
+  } catch (err) {
+    console.error('Get signals error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
