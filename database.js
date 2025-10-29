@@ -181,8 +181,17 @@ class Database {
   }
 
   async updateLicenseVerified(licenseKey) {
+    // Increment activation_count only on first successful verification
+    // Prevents re-verification from inflating the count
     return this.run(
-      'UPDATE licenses SET last_verified = ?, activation_count = activation_count + 1 WHERE license_key = ?',
+      `UPDATE licenses 
+         SET last_verified = ?, 
+             activation_count = CASE 
+               WHEN activation_count IS NULL THEN 1 
+               WHEN activation_count < 1 THEN activation_count + 1 
+               ELSE activation_count 
+             END 
+       WHERE license_key = ?`,
       [Math.floor(Date.now() / 1000), licenseKey]
     );
   }
